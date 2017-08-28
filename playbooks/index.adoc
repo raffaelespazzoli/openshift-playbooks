@@ -10,3 +10,4 @@ Current in-development playbooks include the following:
 * link:/playbooks/app_dev[OpenShift Enterprise 3 Application Development]
 * link:/playbooks/operationalizing[Operationalizing OpenShift Enterprise 3]
 * link:/playbooks/troubleshooting[Troubleshooting]
+* link:/playbooks/security[Security]
