@@ -1,6 +1,6 @@
-```
 ---
 ---
+= OpenShift - Vault Integration
 Raffaele Spazzoli <rspazzol@redhat.com>
 v1.0, 2017-08-28
 :toc: macro
@@ -10,12 +10,12 @@ toc::[]
 
 
 
-= OpenShift - Vault Integration
+
 
 == Introduction
 
-Credentials are environment dependent configurations that need to be kept secret and should be read only by subjects with a need-to-know. +
-This blog post talks about how to manage https://blog.openshift.com/environment-dependent-property-management-strategies-openshift-pipelines/[environment dependent configuratio]https://blog.openshift.com/environment-dependent-property-management-strategies-openshift-pipelines/[https://blog.openshift.com/environment-dependent-property-management-strategies-openshift-pipelines/[n]] when building delivery pipelines, these approaches are not adequate for secrets because they don’t guarantee confidentiality. +
+Credentials are environment dependent configurations that need to be kept secret and should be read only by subjects with a need-to-know. 
+This blog post talks about how to manage https://blog.openshift.com/environment-dependent-property-management-strategies-openshift-pipelines/[environment dependent configuration] when building delivery pipelines, these approaches are not adequate for secrets because they don’t guarantee confidentiality. 
 OpenShift offers https://docs.openshift.com/container-platform/latest/dev_guide/secrets.html[secrets] as a way to inject credentials. Secrets behaves as encoded-64 https://docs.openshift.com/container-platform/latest/dev_guide/configmaps.html[configmaps]. From a security perspective they have the following limitations (as of release 3.5)
  . They are not encrypted at rest.
  . By default cluster admins can see all the secrets of all the tenants.
@@ -43,7 +43,7 @@ There are four actors in the orchestration that injects credentials in an OpenSh
  . The main container that needs the credentials.
 The below picture represents the orchestration:
 
-image::vault-controller.jpg
+image::vault-controller.png[]
 
  . An Init Container requests a https://www.vaultproject.io/docs/concepts/response-wrapping.html[wrapped token] from the Vault Controller over an encrypted connection. Wrapped credentials allow you to pass credentials around without any of the intermediaries having to actually see the credential.
  . The Vault Controller retrieves the Pod details from the Kubernetes API server.
@@ -77,83 +77,89 @@ The following table summarises the threat model:
 
 == Installing the Vault infrastructure
 
-Clone this repository +
-git clone https://github.com/raffaelespazzoli/credscontroller[https://github.com/raffaelespazzoli/credscontroller] +
+Clone this repository 
+----
+git clone https://github.com/raffaelespazzoli/credscontroller[https://github.com/raffaelespazzoli/credscontroller] 
 cd credscontroller
-
+----
 === Create a new project
-
+----
 oc new-project vault-controller
-
+----
 === Install Vault
-
+----
 oc adm policy add-scc-to-user anyuid -z default
 oc create configmap vault-config --from-file=vault-config=./openshift/vault-config.json
 oc create -f ./openshift/vault.yaml
 oc create route passthrough vault --port=8200 --service=vault
-
+----
 === Initialize Vault
-
+----
 export VAULT_ADDR=https://`oc get route | grep -m1 vault | awk '{print $2}'`
 vault init -tls-skip-verify -key-shares=1 -key-threshold=1
-
+----
 === Unseal Vault.
 
-You have to repeat this step every time you start vault. +
-Don't try to automate this step, this is manual by design. +
-You can make the initial seal stronger by increasing the number of keys. +
+You have to repeat this step every time you start vault. 
+Don't try to automate this step, this is manual by design. 
+You can make the initial seal stronger by increasing the number of keys. 
 We will assume that the KEYS environment variable contains the key necessary to unseal the vault and that ROOT_TOKEN contains the root token.
 
-For example: +
-export KEYS=9++8KEDd72S3aGc0zaY9JW11tnQRDTEkCZWMHK2D0CM= +
-export ROOT_TOKEN=c30909da-a713-94bf-bf6e-46180ef79a64 +
+For example: 
+----
+export KEYS=9++8KEDd72S3aGc0zaY9JW11tnQRDTEkCZWMHK2D0CM= 
+export ROOT_TOKEN=c30909da-a713-94bf-bf6e-46180ef79a64 
 vault unseal -tls-skip-verify $KEYS
+----
 
 === Install Vault Controller
-
+----
 oc create secret generic vault-controller --from-literal vault-token=$ROOT_TOKEN
 oc adm policy add-cluster-role-to-user view system:serviceaccount:vault-controller:default
 oc create -f ./openshift/vault-controller.yaml
-
+----
 == Running the example
 
-At this point you are ready to start deploying pods that use this approach to inject secrets. +
-The repository comes with two example one for a https://github.com/raffaelespazzoli/credscontroller/tree/master/examples/spring-example[Vault aware app] and one for a https://github.com/raffaelespazzoli/credscontroller/tree/master/examples/spring-legacy-example[legacy app].  +
-Here are the instructions to run the vault aware example. +
-In this first example a https://projects.spring.io/spring-boot/[spring boot] app uses the spring https://github.com/spring-cloud/spring-cloud-vault[cloud vault configuration plugin] to get part of its configuration from Vault. +
+At this point you are ready to start deploying pods that use this approach to inject secrets. 
+The repository comes with two example one for a https://github.com/raffaelespazzoli/credscontroller/tree/master/examples/spring-example[Vault aware app] and one for a https://github.com/raffaelespazzoli/credscontroller/tree/master/examples/spring-legacy-example[legacy app].  
+Here are the instructions to run the vault aware example. 
+In this first example a https://projects.spring.io/spring-boot/[spring boot] app uses the spring https://github.com/spring-cloud/spring-cloud-vault[cloud vault configuration plugin] to get part of its configuration from Vault. 
 The Init Container will write the unwrapped Vault token to a well know location, the app will use that token to authenticate with Vault and retrieve its credentials.
 
 === Create the Vault policy
 
 We need to create a policy that will allow to access a specific subset of secrets. This is how you can have multiple application storing their secrets in Vault.
-
+----
 export VAULT_TOKEN=$ROOT_TOKEN
 vault policy-write -tls-skip-verify spring-example ./examples/spring-example/spring-example.hcl
-
+----
 === Create the secret
 
 We now store a static secret in Vault +
+----
 vault write -tls-skip-verify secret/spring-example password=pwd
-
+----
 === Build the app
-
+----
 oc new-project spring-example
 oc new-build registry.access.redhat.com/redhat-openjdk-18/openjdk18-openshift~https://github.com/raffaelespazzoli/credscontroller --context-dir=examples/spring-example --name spring-example
-
+----
 === Allow the app to talk to Vault and Vault Controller
 
-You need to execute this step only if you are running in a multi-tenant OpenShift +
+You need to execute this step only if you are running in a multi-tenant OpenShift 
+----
 oc adm pod-network join-projects --to vault-controller spring-example
-
+----
 === Deploy the app
-
+----
 oc create -f ./examples/spring-example/spring-example.yaml
 oc expose svc spring-example
-
+----
 === Verify the app
-
+----
 export SPRING_EXAMPLE_ADDR=http://`oc get route | grep -m1 spring | awk '{print $2}'`
-curl $SPRING_EXAMPLE_ADDR/secret +
+curl $SPRING_EXAMPLE_ADDR/secret 
+----
 The last command should return the secret that was initially stored in Vault.
 
 
